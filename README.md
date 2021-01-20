@@ -14,17 +14,6 @@ The model was implemented in Python 3.6. The following packages are needed for r
 
 ## Running G-Net baseline:
 
-
-
-    To generate a new simulation, run hyperparameter optimisation and tests for the RMSN use :
-
-        bash test_rmsn.sh
-
-    This produces the raw MSEs into the "results" folder, and saves calibrated models into the "models" folder
-
-    Note that for the paper, results are imported in normalised root mean-squared error terms -> i.e. sqrt(mse) / 1150
-
-
 To train and evaluate the Counterfactual Recurrent Network on tumor growth, generate tumor growth data using the rMSN baseline code. Then, run hyperparameter optimization and simulation:
 
 ```
