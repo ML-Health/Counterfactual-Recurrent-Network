@@ -84,13 +84,16 @@ def process_seq_data(data_map, states, projection_horizon):
     """
     Split the sequences in the training data to train the decoder.
     """
-
     outputs = data_map['outputs']
     sequence_lengths = data_map['sequence_lengths']
     active_entries = data_map['active_entries']
     current_treatments = data_map['current_treatments']
     previous_treatments = data_map['previous_treatments']
     current_covariates = data_map['current_covariates']
+    
+    # Ensure sequence_lengths <= active_entries.shape[1]
+    max_seq_len = active_entries.shape[1]
+    sequence_lengths[sequence_lengths > max_seq_len] = max_seq_len
 
     num_patients, num_time_steps, num_features = outputs.shape
 
@@ -160,6 +163,10 @@ def process_counterfactual_seq_test_data(test_data, data_map, states, projection
     current_treatments = data_map['current_treatments']
     previous_treatments = data_map['previous_treatments']
     current_covariates = data_map['current_covariates']
+    
+    # Ensure sequence_lengths <= (outputs.shape[1]+1-projection_horizon)
+    max_seq_len = outputs.shape[1]+1-projection_horizon
+    sequence_lengths[sequence_lengths > max_seq_len] = max_seq_len
 
     num_patient_points = outputs.shape[0]
     sequence_lengths = sequence_lengths - 1
@@ -195,8 +202,8 @@ def process_counterfactual_seq_test_data(test_data, data_map, states, projection
         'output_means': data_map['output_means'],
         'output_stds': data_map['output_stds'],
         'patient_types': test_data['patient_types'],
-        'patient_ids_all_trajectories': test_data['patient_ids_all_trajectories'],
-        'patient_current_t': test_data['patient_current_t']
+#         'patient_ids_all_trajectories': test_data['patient_ids_all_trajectories'],
+#         'patient_current_t': test_data['patient_current_t']
     }
 
     return seq2seq_data_map
@@ -205,7 +212,7 @@ def process_counterfactual_seq_test_data(test_data, data_map, states, projection
 def test_CRN_decoder(pickle_map, max_projection_horizon, projection_horizon, models_dir,
                      encoder_model_name, encoder_hyperparams_file,
                      decoder_model_name, decoder_hyperparams_file,
-                     b_decoder_hyperparm_tuning):
+                     b_decoder_hyperparm_tuning, is_simulate):
     training_data = pickle_map['training_data']
     validation_data = pickle_map['validation_data']
     scaling_data = pickle_map['scaling_data']
@@ -218,14 +225,17 @@ def test_CRN_decoder(pickle_map, max_projection_horizon, projection_horizon, mod
 
     training_seq_processed = process_seq_data(training_processed, training_br_states, max_projection_horizon)
     validation_seq_processed = process_seq_data(validation_processed, validation_br_states, max_projection_horizon)
+    
+    if not is_simulate:
+        fit_CRN_decoder(dataset_train=training_seq_processed, dataset_val=validation_seq_processed,
+                        model_dir=models_dir,
+                        model_name=decoder_model_name, encoder_hyperparams_file=encoder_hyperparams_file,
+                        decoder_hyperparams_file=decoder_hyperparams_file, b_hyperparam_opt=b_decoder_hyperparm_tuning)
 
-    fit_CRN_decoder(dataset_train=training_seq_processed, dataset_val=validation_seq_processed,
-                    model_dir=models_dir,
-                    model_name=decoder_model_name, encoder_hyperparams_file=encoder_hyperparams_file,
-                    decoder_hyperparams_file=decoder_hyperparams_file, b_hyperparam_opt=b_decoder_hyperparm_tuning)
+    test_data_seq_actions = pickle_map['test_data']
+    test_processed = get_processed_data(pickle_map['test_data'], scaling_data)
 
-    test_data_seq_actions = pickle_map['test_data_seq']
-    test_processed = get_processed_data(pickle_map['test_data_seq'], scaling_data)
+    # Check test_processed['previous_treatments'].shape
     encoder_model = load_trained_model(test_processed, encoder_hyperparams_file, encoder_model_name,
                                        models_dir)
     test_br_states = encoder_model.get_balancing_reps(test_processed)
@@ -248,6 +258,29 @@ def test_CRN_decoder(pickle_map, max_projection_horizon, projection_horizon, mod
     not_nan = np.array([i for i in range(seq_predictions.shape[0]) if i not in nan_idx])
     mse = get_mse_at_follow_up_time(seq_predictions[not_nan], test_seq_processed['unscaled_outputs'][not_nan],
                                     test_seq_processed['active_entries'][not_nan])
-
     rmse = np.sqrt(mse[projection_horizon - 1]) / 1150 * 100  # Max tumour volume = 1150
-    return rmse
+
+    # Compute %RMSE over time
+    mean = seq_predictions[not_nan]
+    output = test_seq_processed['unscaled_outputs'][not_nan]
+    active_entries = test_seq_processed['active_entries'][not_nan]
+    mse_over_time = []
+    for t in range(projection_horizon):
+        mean_t = mean[:, t:t+1, :]
+        output_t = output[:, t:t+1, :]
+        active_entries_t = active_entries[:, t:t+1, :]
+
+        mse_t = np.sum(np.sum((mean_t - output_t) ** 2 * active_entries_t, axis=-1), axis=0) \
+               / active_entries_t.sum(axis=0).sum(axis=-1)
+        mse_over_time.append(mse_t)
+    pct_rmse_over_time = [x[0]**0.5/1150*100 for x in mse_over_time]
+    print("%RMSE over time:", pct_rmse_over_time)
+    
+    mses = np.sum(np.sum((mean - output) ** 2 * active_entries, axis=-1), axis=0) \
+           / active_entries.sum(axis=0).sum(axis=-1)
+    overall_pct_rmse = np.mean(mses)**0.5/1150*100
+    print("Overall %RMSE:", overall_pct_rmse)
+    
+    return pct_rmse_over_time, overall_pct_rmse
+    
+#     return rmse

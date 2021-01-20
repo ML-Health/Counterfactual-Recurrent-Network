@@ -72,7 +72,7 @@ def fit_CRN_encoder(dataset_train, dataset_val, model_name, model_dir, hyperpara
 
 def test_CRN_encoder(pickle_map, models_dir,
                      encoder_model_name, encoder_hyperparams_file,
-                     b_encoder_hyperparm_tuning):
+                     b_encoder_hyperparm_tuning, is_simulate):
 
     training_data = pickle_map['training_data']
     validation_data = pickle_map['validation_data']
@@ -82,10 +82,11 @@ def test_CRN_encoder(pickle_map, models_dir,
     training_processed = get_processed_data(training_data, scaling_data)
     validation_processed = get_processed_data(validation_data, scaling_data)
     test_processed = get_processed_data(test_data, scaling_data)
-
-    fit_CRN_encoder(dataset_train=training_processed, dataset_val=validation_processed,
-                    model_name=encoder_model_name, model_dir=models_dir,
-                    hyperparams_file=encoder_hyperparams_file, b_hyperparam_opt=b_encoder_hyperparm_tuning)
+    
+    if not is_simulate:
+        fit_CRN_encoder(dataset_train=training_processed, dataset_val=validation_processed,
+                        model_name=encoder_model_name, model_dir=models_dir,
+                        hyperparams_file=encoder_hyperparams_file, b_hyperparam_opt=b_encoder_hyperparm_tuning)
 
     CRN_encoder = load_trained_model(validation_processed, encoder_hyperparams_file, encoder_model_name, models_dir)
     mean_mse, mse = CRN_encoder.evaluate_predictions(test_processed)
